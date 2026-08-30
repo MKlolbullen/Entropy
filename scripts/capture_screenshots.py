@@ -42,6 +42,7 @@ def main() -> int:
         event.correlation_count = 3
         window.responder._add_event(event)
         window.responder.table.selectRow(0)
+        window.responder.details.set_event(event.to_dict())
     app.processEvents()
     window.grab().save(str(out / "protocol-details.png"))
 
