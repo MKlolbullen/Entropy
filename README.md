@@ -1,64 +1,110 @@
 # LNK-NG
 
-**LNK generation, static analysis, Responder Analyze-mode telemetry, and evidence handling in one desktop workbench.**
+**Desktop LNK analysis + Responder Analyze-mode telemetry + verifiable evidence.**
 
-> For authorized security testing, lab validation, and defensive analysis. Responder execution remains Analyze-only (`-A`).
+> Built for authorized security testing, lab validation, and defensive analysis. Responder execution is intentionally restricted to Analyze mode (`-A`).
 
-<p align="center"><img src="assets/lnk-ng-ui.svg" alt="LNK-NG Phase 4 UI overview" width="900"></p>
+<p align="center">
+  <img src="assets/screenshots/lnk-builder.png" alt="LNK-NG LNK Builder runtime" width="49%">
+  <img src="assets/screenshots/responder-workbench.png" alt="LNK-NG Responder runtime" width="49%">
+</p>
 
-## What it does
+The screenshots above are captured from the real PySide6 application in CI. The Responder screenshot uses the built-in RFC 5737 **Documentation lab** template rather than live target data.
 
-LNK-NG keeps a deliberately small top-level UI: **LNK Builder** and **Responder**. Underneath that, Phase 4 adds correlation, integrity verification, run comparison, and stronger LNK static-analysis indicators without turning the project into a sprawling multi-window tool.
-
-<p align="center"><img src="assets/lnk-ng-workflow.svg" alt="LNK-NG workflow" width="900"></p>
+## Highlights
 
 ### LNK Builder
 
-- Build NTLM/environment-style shortcut artifacts for controlled lab validation.
-- Inspect existing Shell Link metadata with `win32com`, `pylnk3`, or a binary fallback parser.
-- Extract UNC references and useful embedded strings.
-- Calculate a static **risk score (0–100)** and surface indicators such as remote resource references, command interpreters, long argument strings, and target/workdir mismatches.
+- Build shortcut artifacts for controlled lab validation.
+- Inspect Shell Link metadata with `win32com`, `pylnk3`, or a binary fallback parser.
+- Extract UNC references and embedded strings.
+- Calculate a bounded **0–100 static risk score**.
+- Flag remote-resource references, command interpreters, unusually long arguments, and target/workdir mismatches.
 
 ### Responder workbench
 
 - One persistent `QProcess`; changing views does not spawn duplicate Responder instances.
-- Analyze-only operation (`-A`).
-- Preflight checks for executable/version/configuration, privileges, and listener conflicts.
+- Analyze-only execution (`-A`).
+- Executable/version/configuration, privilege, and listener-conflict preflight checks.
 - Read-only `Responder.conf` service-state matrix.
-- Engagement CIDR allowlists/exclusions with `IN`, `OUT`, and `UNKNOWN` event tagging.
-- Protocol-aware structured events with credential/hash-like material redacted before persistence.
-- Phase 4 correlation IDs group repeated observations from the same source/name/protocol inside a time window.
+- Protocol-aware structured events with sensitive credential/hash-like material redacted before persistence.
+- Engagement scope tagging: `IN`, `OUT`, or `UNKNOWN`.
+- Time-window correlation across related observations.
+- Protocol-specific detail panes for name-resolution, SMB, HTTP(S), DNS, and generic events.
 
-### Evidence
+<p align="center">
+  <img src="assets/screenshots/protocol-details.png" alt="LNK-NG protocol-specific event details" width="900">
+</p>
 
-Each completed run contains:
+The protocol-detail screenshot is also generated from the application itself using safe synthetic `192.0.2.0/24` documentation-range telemetry.
+
+## Engagement templates
+
+Phase 5 adds reusable engagement profiles directly to the **Engagement** tab:
+
+- **Unscoped analysis** — observations remain `UNKNOWN` unless scope is supplied.
+- **Private lab** — RFC 1918 ranges as a starting point for isolated labs.
+- **Documentation lab** — RFC 5737 networks for demos, screenshots, and documentation.
+- **User templates** — saved locally under `~/.config/lnk-ng/engagements/`.
+
+Exclusions take precedence over allowlists, and the scope snapshot is frozen for the lifetime of an active run.
+
+## Evidence and attestation
+
+Every completed run is self-contained:
 
 ```text
 runs/<run-id>/
 ├── manifest.json
 ├── events.jsonl
-└── integrity.json
+├── integrity.json
+└── attestation.json     # optional, created when a run is signed
 ```
 
-`integrity.json` records SHA-256 hashes and file sizes for the manifest and event stream. Verification detects later tampering. Evidence exports include all three files.
+`integrity.json` stores SHA-256 hashes and sizes for the evidence files. Phase 5 can then create an **Ed25519 attestation** over that integrity document. The evidence bundle carries the public key and detached signature in `attestation.json`; the private key stays outside the run directory and outside exported evidence.
 
-The evidence backend can also compare two runs and report deltas by protocol, event type, scope, and source—for example `SMB +3`, `OUT -2`, or a newly observed source.
+Generate a signing key:
 
-## Event model
+```bash
+lnk-ng-attest keygen ~/keys/lnk-ng-signing.pem
+```
+
+Verify an attested run:
+
+```bash
+lnk-ng-attest verify runs/<run-id>
+```
+
+The Evidence tab also exposes **New signing key**, **Attest + export**, and **Verify attestation** actions.
+
+## Evidence analysis
+
+Stored runs can be browsed and exported from the UI. The backend supports run-to-run comparison across:
+
+```text
+protocol
+ event_type
+scope
+source
+```
+
+Correlation metadata is persisted with each structured event:
 
 ```text
 timestamp
 protocol
- event_type
+event_type
 source
 identity / name
-scope              IN | OUT | UNKNOWN
+scope                 IN | OUT | UNKNOWN
 correlation_id
 correlation_count
-message            redacted source line
+message               redacted source line
 ```
 
 ## Architecture
+
+<p align="center"><img src="assets/lnk-ng-workflow.svg" alt="LNK-NG architecture and workflow" width="900"></p>
 
 ```text
 MainWindow
@@ -67,11 +113,11 @@ MainWindow
 │   └── Inspect + risk indicators
 │
 └── Responder
-    ├── Engagement
+    ├── Engagement + templates
     ├── Preflight
     ├── Services
-    ├── Events + correlation
-    └── Evidence + integrity/diff/export
+    ├── Events + protocol details + correlation
+    └── Evidence + integrity + attestation + export
 
 ResponderController
 ├── QProcess
@@ -79,12 +125,13 @@ ResponderController
 └── RunStore
     ├── manifest.json
     ├── events.jsonl
-    └── integrity.json
+    ├── integrity.json
+    └── attestation.json (optional)
 ```
 
-## Install
+## Install from source
 
-Linux / Kali:
+### Linux / Kali
 
 ```bash
 python3 -m venv .venv
@@ -93,7 +140,7 @@ pip install -e '.[linux,dev]'
 lnk-ng
 ```
 
-Windows:
+### Windows
 
 ```powershell
 py -m venv .venv
@@ -102,25 +149,34 @@ pip install -e ".[windows,dev]"
 lnk-ng
 ```
 
-Responder remains an external dependency.
+Responder remains an external dependency and is not bundled with LNK-NG.
 
-## Tests and CI
+## Application bundles
+
+Phase 5 adds a PyInstaller workflow for both **Linux** and **Windows**. It produces self-contained application directories as GitHub Actions artifacts, and tagged releases publish the generated bundle alongside the Python distribution artifacts.
+
+These are application bundles rather than native `.deb` / `.msi` installers. Native installers can be layered on later without changing the application architecture.
+
+To create release artifacts, push a version tag such as:
+
+```bash
+git tag v0.5.0
+git push origin v0.5.0
+```
+
+## Tests, screenshots, and CI
 
 ```bash
 pytest -q
 ruff check lnkup tests
 ```
 
-GitHub Actions covers Linux and Windows on Python 3.10, 3.12, and 3.13. Tags matching `v*` build wheel/sdist artifacts and publish a GitHub Release.
+GitHub Actions covers Linux and Windows on Python 3.10, 3.12, and 3.13. A separate headless Qt workflow launches the actual application and refreshes the README screenshot assets reproducibly.
 
 ## Safety boundary
 
-LNK-NG reads Responder configuration and runs Responder in Analyze mode. It does **not** mutate `Responder.conf`, enable poisoning switches, relay captured material, crack credentials, or automatically interact with observed hosts.
-
-## Roadmap
-
-Phase 5 candidates: signed/attested evidence bundles, protocol-specific detail panes, installer/application bundles, engagement templates, and captured runtime screenshots for the README.
+LNK-NG reads Responder configuration and starts Responder only in Analyze mode. It does **not** mutate `Responder.conf`, enable poisoning switches, automate relay behavior, crack credentials, or automatically interact with observed hosts.
 
 ## Provenance
 
-LNK-NG is a refactored next-generation experiment inspired by `Plazmaz/LNKUp`, with a new architecture focused on visibility, reproducibility, and defensive analysis.
+LNK-NG is a refactored next-generation experiment inspired by `Plazmaz/LNKUp`, with a new architecture centered on visibility, reproducibility, defensive analysis, and evidence integrity.

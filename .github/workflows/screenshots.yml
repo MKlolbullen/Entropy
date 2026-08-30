@@ -1,0 +1,44 @@
+name: Runtime screenshots
+
+on:
+  pull_request:
+    paths-ignore:
+      - "assets/screenshots/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev]"
+      - run: python scripts/capture_screenshots.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-screenshots
+          path: assets/screenshots/*.png
+      - name: Commit reproducible runtime screenshots
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/screenshots/*.png
+          if ! git diff --cached --quiet; then
+            git commit -m "docs: refresh runtime screenshots [skip ci]"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
