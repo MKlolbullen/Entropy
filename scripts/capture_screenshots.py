@@ -37,6 +37,7 @@ def main() -> int:
     window.responder.tabs.setCurrentIndex(3)
     event = parse_line("[LLMNR] request from 192.0.2.44 for name FILESERVER")
     if event:
+        event.timestamp = "2026-08-30T00:00:00+00:00"
         event.scope = "IN"
         event.correlation_id = "corr-demo01"
         event.correlation_count = 3
