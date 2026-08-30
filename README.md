@@ -1,68 +1,97 @@
 # LNK-NG
 
-A modern desktop evolution of the original LNKUp concept: **one window, two persistent views**, a clean LNK builder/inspector, and a singleton Responder analysis controller.
+A modern desktop evolution of the original LNKUp concept: **one window, two persistent views**, a LNK builder/inspector, and a singleton Responder **Analyze-mode** telemetry controller.
 
-> Built for authorized security testing, lab validation, and defensive analysis. Responder execution remains **Analyze mode only** (`-A`) in Phase 2; the service matrix is deliberately read-only.
+> For authorized security testing, lab validation, and defensive analysis. LNK-NG does not enable active Responder poisoning in Phase 3.
 
-## Phase 2
+## Phase 3
 
-### LNK Builder → Build / Inspect
+Phase 3 turns the Phase 2 prototype into a more complete operator workbench without adding top-level window clutter.
 
-The first primary view now contains two workflows without adding another top-level screen:
+### Protocol-aware event model
 
-- **Build** — listener synchronization, NTLM/environment modes, command/output configuration, UNC preview and `.lnk` generation.
-- **Inspect** — validate the Shell Link header, inspect target/arguments/workdir/icon metadata, enumerate UNC references and extract useful embedded strings. On Windows it uses `win32com`; on Linux it attempts `pylnk3` and falls back to binary forensic extraction.
-
-### Responder → Preflight / Services / Events
-
-Responder remains one persistent `QProcess`, but the view now adds:
-
-- executable resolution and version detection
-- automatic `Responder.conf` discovery
-- privilege/elevation check
-- known listener-port conflict detection
-- read-only service-state matrix parsed from `Responder.conf`
-- structured per-run evidence directories
-- JSON manifest + JSONL event stream
-- visible run/session ID
-- credential/hash-like values redacted before UI/event persistence
-
-## Evidence model
-
-Every analysis start creates:
+Responder output is normalized into structured events:
 
 ```text
-runs/
-└── 20260830T081500Z-a1b2c3d4/
-    ├── manifest.json
-    └── events.jsonl
+timestamp
+protocol       LLMNR / SMB / HTTP / DNS / SYSTEM / ...
+event_type     name_resolution_observed / authentication_observed / request_observed / listener_status / error / log
+source         observed IPv4 when available
+identity       username when present
+name           queried name when present
+scope          IN / OUT / UNKNOWN
+message        redacted original line
 ```
 
-`manifest.json` records the mode, interface, command, executable, timestamps and exit result. `events.jsonl` receives the redacted structured event stream.
+Credential/hash-like values are redacted before the event reaches the UI or evidence store.
 
-## Architecture
+### Engagement + scope tagging
+
+The Responder view now includes an **Engagement** tab with:
+
+- engagement name
+- allowed CIDRs
+- excluded CIDRs
+- validation/normalization
+- immutable scope during an active run
+
+Analyze-mode traffic is not blocked or modified; events are tagged against the engagement snapshot. Exclusions win over allowlists. With no allowlist, sources are tagged `UNKNOWN` rather than pretending they are in scope.
+
+### Evidence browser
+
+The **Evidence** tab can:
+
+- enumerate previous runs from `runs/`
+- show engagement name, timestamps, event count, and stored structured events
+- browse protocol/type/source/scope/message columns
+- export a run as a ZIP containing `manifest.json` and `events.jsonl`
+
+Each run remains self-contained:
 
 ```text
-MainWindow
+runs/<run-id>/
+├── manifest.json
+└── events.jsonl
+```
+
+### Event filtering
+
+Live events can be filtered by:
+
+- protocol
+- scope (`IN`, `OUT`, `UNKNOWN`)
+- free-text search
+
+### CI + releases
+
+GitHub Actions now includes:
+
+- Linux + Windows test matrix
+- Python 3.10 / 3.12 / 3.13
+- pytest
+- Ruff
+- tag-triggered wheel/sdist builds
+- GitHub Release artifact upload for tags matching `v*`
+
+## UI structure
+
+```text
+LNK-NG
 ├── LNK Builder
 │   ├── Build
 │   └── Inspect
 │
 └── Responder
+    ├── Engagement
     ├── Preflight
-    ├── Services (read-only)
-    └── Events
-
-ResponderController
-├── QProcess (single owner)
-└── RunStore
-    ├── manifest.json
-    └── events.jsonl
+    ├── Services
+    ├── Events
+    └── Evidence
 ```
 
-## Install
+The Responder process remains owned by one controller, so changing tabs or switching back to LNK Builder does not spawn another process.
 
-### Linux / Kali
+## Install
 
 ```bash
 python3 -m venv .venv
@@ -71,45 +100,47 @@ pip install -e '.[linux,dev]'
 lnk-ng
 ```
 
-### Windows
+Windows:
 
 ```powershell
 py -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -e "[windows,dev]"
+pip install -e ".[windows,dev]"
 lnk-ng
 ```
 
-Responder is an external dependency and must be available in `PATH`, or its executable path can be entered in the UI.
+Responder remains an external dependency.
 
-## CLI compatibility
+## Tests
 
 ```bash
-python generate.py --host 192.168.1.44 --type ntlm --output test.lnk
+pytest -q
+ruff check lnkup tests
 ```
 
-Environment mode:
+## Releases
+
+Create and push a version tag to build GitHub release artifacts:
 
 ```bash
-python generate.py \
-  --host 192.168.1.44 \
-  --type environment \
-  --vars USERNAME COMPUTERNAME USERDOMAIN \
-  --output env.lnk
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 ## Safety boundary
 
-LNK-NG Phase 2 can inspect the installed Responder configuration and show which services are configured, but does **not** edit `Responder.conf` and does **not** expose active poisoning mode. This keeps the orchestration layer deterministic while the preflight, evidence, parser, and UX pieces mature.
+Phase 3 reads Responder configuration and runs Responder with `-A`. It does not mutate `Responder.conf`, enable poisoning switches, or automatically interact with observed hosts.
 
 ## Next
 
-- richer protocol-aware event parsing
-- evidence/export browser
-- link-property risk indicators in Inspector
-- CI across Linux + Windows
-- packaged releases
-- optional engagement metadata and scoped allowlists
+Potential Phase 4 work:
+
+- protocol-specific detail panes and event correlation
+- run comparison/diffing
+- signed evidence manifests / SHA-256 chain-of-custody metadata
+- installer/application bundles
+- richer LNK static-analysis indicators
+- optional project-level engagement templates
 
 ## Provenance
 

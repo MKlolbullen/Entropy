@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, Signal
 
+from lnkup.core.scope import EngagementScope
 from lnkup.core.sessions import RunStore
 from .events import parse_line
 from .options import ResponderOptions
@@ -21,7 +22,7 @@ class ResponderState(str, Enum):
 
 class ResponderController(QObject):
     state_changed = Signal(str)
-    event_received = Signal(str, str, str)
+    event_received = Signal(object)
     session_changed = Signal(str)
     error = Signal(str)
 
@@ -30,6 +31,7 @@ class ResponderController(QObject):
         self._process = QProcess(self)
         self._state = ResponderState.STOPPED
         self.runs = RunStore(runs_root)
+        self.scope = EngagementScope()
 
         self._process.started.connect(self._on_started)
         self._process.finished.connect(self._on_finished)
@@ -45,6 +47,11 @@ class ResponderController(QObject):
     def run_id(self) -> str | None:
         return self.runs.current.run_id if self.runs.current else None
 
+    def set_scope(self, scope: EngagementScope) -> None:
+        if self._state not in {ResponderState.STOPPED, ResponderState.ERROR}:
+            raise RuntimeError("Scope cannot be changed while an analysis run is active")
+        self.scope = scope
+
     def command_preview(self, options: ResponderOptions) -> str:
         return " ".join(options.argv())
 
@@ -55,19 +62,16 @@ class ResponderController(QObject):
         if executable is None and Path(options.executable).expanduser().is_file():
             executable = str(Path(options.executable).expanduser().resolve())
         if executable is None:
-            raise RuntimeError(
-                f"Could not find '{options.executable}' in PATH. Install Responder or set its executable path."
-            )
+            raise RuntimeError(f"Could not find '{options.executable}' in PATH")
         argv = options.argv()
-        session = self.runs.start(
-            {
-                "component": "responder",
-                "mode": "analyze",
-                "interface": options.interface,
-                "command": argv,
-                "executable": executable,
-            }
-        )
+        session = self.runs.start({
+            "component": "responder",
+            "mode": "analyze",
+            "interface": options.interface,
+            "command": argv,
+            "executable": executable,
+            "engagement": self.scope.to_dict(),
+        })
         self.session_changed.emit(session.run_id)
         self._set_state(ResponderState.STARTING)
         self._process.setProgram(executable)
@@ -103,15 +107,11 @@ class ResponderController(QObject):
     def _consume(self, text: str) -> None:
         for line in text.splitlines():
             event = parse_line(line)
-            if event:
-                self.runs.append_event(
-                    {
-                        "timestamp": event.timestamp,
-                        "level": event.level,
-                        "message": event.message,
-                    }
-                )
-                self.event_received.emit(event.timestamp, event.level, event.message)
+            if not event:
+                continue
+            event.scope = self.scope.classify(event.source)
+            self.runs.append_event(event.to_dict())
+            self.event_received.emit(event)
 
     def _read_stdout(self) -> None:
         data = bytes(self._process.readAllStandardOutput()).decode(errors="replace")

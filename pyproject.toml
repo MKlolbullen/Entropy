@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lnk-ng"
-version = "0.1.0"
-description = "Desktop workbench for LNK generation and Responder analysis workflows"
+version = "0.3.0"
+description = "Desktop workbench for LNK generation, inspection, and Responder analysis workflows"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -16,7 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 windows = ["pywin32>=306"]
 linux = ["pylnk3>=0.4"]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "ruff>=0.6", "build>=1.2"]
 
 [project.scripts]
 lnk-ng = "lnkup.app:main"
@@ -26,3 +26,6 @@ include = ["lnkup*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
