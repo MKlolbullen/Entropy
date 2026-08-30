@@ -1,25 +1,15 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QFormLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QHeaderView,
-    QLabel,
-    QLineEdit,
-    QMessageBox,
-    QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
-    QTabWidget,
-    QVBoxLayout,
-    QWidget,
-)
 from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (
+    QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton,
+    QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+)
 
+from lnkup.core.evidence import export_bundle, list_runs, load_events
 from lnkup.core.interfaces import list_interfaces
+from lnkup.core.scope import EngagementScope, parse_network_text
 from lnkup.responder.controller import ResponderController
 from lnkup.responder.options import ResponderOptions
 from lnkup.responder.preflight import run_preflight
@@ -32,10 +22,12 @@ class ResponderView(QWidget):
         super().__init__(parent)
         self.controller = controller
         self._interfaces = []
+        self._evidence_runs = []
         self._build_ui()
         self._wire()
         self.refresh_interfaces()
         self._run_preflight()
+        self._refresh_evidence()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -43,7 +35,7 @@ class ResponderView(QWidget):
         root.setSpacing(12)
         title = QLabel("Responder")
         title.setObjectName("viewTitle")
-        subtitle = QLabel("Preflight, configuration visibility, structured evidence, and one persistent Analyze-mode process.")
+        subtitle = QLabel("Analyze-mode telemetry with scope tagging, protocol-aware events, and reproducible evidence.")
         subtitle.setObjectName("muted")
         root.addWidget(title)
         root.addWidget(subtitle)
@@ -63,21 +55,20 @@ class ResponderView(QWidget):
         form.addRow("Listener IPv4", self.ip_label)
         self.executable = QLineEdit("responder")
         form.addRow("Executable", self.executable)
-
-        options_row = QWidget()
-        options_layout = QHBoxLayout(options_row)
-        options_layout.setContentsMargins(0, 0, 0, 0)
-        self.analyze = QCheckBox("Analyze only")
-        self.analyze.setChecked(True)
-        self.analyze.setEnabled(False)
         self.verbose = QCheckBox("Verbose")
         self.verbose.setChecked(True)
         self.quiet = QCheckBox("Quiet")
-        options_layout.addWidget(self.analyze)
-        options_layout.addWidget(self.verbose)
-        options_layout.addWidget(self.quiet)
-        options_layout.addStretch(1)
-        form.addRow("Mode", options_row)
+        mode = QWidget()
+        mode_layout = QHBoxLayout(mode)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        locked = QCheckBox("Analyze only")
+        locked.setChecked(True)
+        locked.setEnabled(False)
+        mode_layout.addWidget(locked)
+        mode_layout.addWidget(self.verbose)
+        mode_layout.addWidget(self.quiet)
+        mode_layout.addStretch(1)
+        form.addRow("Mode", mode)
         self.command = QLineEdit()
         self.command.setReadOnly(True)
         form.addRow("Command preview", self.command)
@@ -91,7 +82,6 @@ class ResponderView(QWidget):
         controls.addWidget(self.run_id)
         controls.addStretch(1)
         self.preflight_button = QPushButton("Run preflight")
-        self.preflight_button.clicked.connect(self._run_preflight)
         self.start_button = QPushButton("Start analysis")
         self.start_button.setObjectName("primaryButton")
         self.stop_button = QPushButton("Stop")
@@ -101,11 +91,35 @@ class ResponderView(QWidget):
         controls.addWidget(self.stop_button)
         root.addLayout(controls)
 
-        tabs = QTabWidget()
-        tabs.addTab(self._preflight_tab(), "Preflight")
-        tabs.addTab(self._services_tab(), "Services")
-        tabs.addTab(self._events_tab(), "Events")
-        root.addWidget(tabs, 1)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._scope_tab(), "Engagement")
+        self.tabs.addTab(self._preflight_tab(), "Preflight")
+        self.tabs.addTab(self._services_tab(), "Services")
+        self.tabs.addTab(self._events_tab(), "Events")
+        self.tabs.addTab(self._evidence_tab(), "Evidence")
+        root.addWidget(self.tabs, 1)
+
+    def _scope_tab(self) -> QWidget:
+        page = QWidget()
+        form = QFormLayout(page)
+        self.engagement_name = QLineEdit("Unscoped analysis")
+        self.scope_allow = QPlainTextEdit()
+        self.scope_allow.setPlaceholderText("10.20.30.0/24\n192.0.2.0/28")
+        self.scope_allow.setMaximumHeight(95)
+        self.scope_exclude = QPlainTextEdit()
+        self.scope_exclude.setPlaceholderText("10.20.30.1/32")
+        self.scope_exclude.setMaximumHeight(75)
+        self.scope_status = QLabel("No allowlist configured: observed sources are tagged UNKNOWN.")
+        self.scope_status.setWordWrap(True)
+        self.scope_status.setObjectName("muted")
+        validate = QPushButton("Validate scope")
+        validate.clicked.connect(self._validate_scope)
+        form.addRow("Engagement", self.engagement_name)
+        form.addRow("Allowed CIDRs", self.scope_allow)
+        form.addRow("Excluded CIDRs", self.scope_exclude)
+        form.addRow("", validate)
+        form.addRow("Status", self.scope_status)
+        return page
 
     def _preflight_tab(self) -> QWidget:
         page = QWidget()
@@ -124,7 +138,7 @@ class ResponderView(QWidget):
     def _services_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        note = QLabel("Read-only view of service states discovered in Responder.conf. This screen does not modify the configuration.")
+        note = QLabel("Read-only Responder.conf service state. LNK-NG does not mutate Responder configuration.")
         note.setObjectName("muted")
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -139,16 +153,53 @@ class ResponderView(QWidget):
     def _events_tab(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Time", "Level", "Message"])
+        filters = QHBoxLayout()
+        self.protocol_filter = QComboBox()
+        self.protocol_filter.addItem("All protocols")
+        self.scope_filter = QComboBox()
+        self.scope_filter.addItems(["All scopes", "IN", "OUT", "UNKNOWN"])
+        self.event_search = QLineEdit()
+        self.event_search.setPlaceholderText("Filter events…")
+        filters.addWidget(self.protocol_filter)
+        filters.addWidget(self.scope_filter)
+        filters.addWidget(self.event_search, 1)
+        layout.addLayout(filters)
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Time", "Protocol", "Type", "Source", "Scope", "Message"])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        for column in range(5):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
+        return page
+
+    def _evidence_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        toolbar = QHBoxLayout()
+        self.evidence_select = QComboBox()
+        refresh = QPushButton("Refresh")
+        export = QPushButton("Export ZIP")
+        refresh.clicked.connect(self._refresh_evidence)
+        export.clicked.connect(self._export_evidence)
+        self.evidence_select.currentIndexChanged.connect(self._load_evidence)
+        toolbar.addWidget(self.evidence_select, 1)
+        toolbar.addWidget(refresh)
+        toolbar.addWidget(export)
+        layout.addLayout(toolbar)
+        self.evidence_summary = QLabel("No stored runs")
+        self.evidence_summary.setObjectName("muted")
+        self.evidence_summary.setWordWrap(True)
+        layout.addWidget(self.evidence_summary)
+        self.evidence_table = QTableWidget(0, 6)
+        self.evidence_table.setHorizontalHeaderLabels(["Time", "Protocol", "Type", "Source", "Scope", "Message"])
+        self.evidence_table.verticalHeader().setVisible(False)
+        self.evidence_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.evidence_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.evidence_table, 1)
         return page
 
     def _wire(self) -> None:
@@ -156,31 +207,36 @@ class ResponderView(QWidget):
         self.verbose.toggled.connect(self._update_preview)
         self.quiet.toggled.connect(self._update_preview)
         self.executable.textChanged.connect(self._update_preview)
+        self.preflight_button.clicked.connect(self._run_preflight)
         self.start_button.clicked.connect(self._start)
         self.stop_button.clicked.connect(self.controller.stop)
         self.controller.state_changed.connect(self._state_changed)
         self.controller.session_changed.connect(self._session_changed)
         self.controller.event_received.connect(self._add_event)
         self.controller.error.connect(lambda msg: QMessageBox.critical(self, "Responder", msg))
+        self.protocol_filter.currentTextChanged.connect(self._apply_event_filters)
+        self.scope_filter.currentTextChanged.connect(self._apply_event_filters)
+        self.event_search.textChanged.connect(self._apply_event_filters)
 
     def refresh_interfaces(self) -> None:
-        current_name = self._selected_interface_name() if self.interface.count() else None
+        current = self._selected_interface_name() if self.interface.count() else None
         self._interfaces = list_interfaces()
         self.interface.blockSignals(True)
         self.interface.clear()
         for iface in self._interfaces:
-            label = iface.name + (f"  ({iface.ipv4})" if iface.ipv4 else "")
-            self.interface.addItem(label, iface.name)
+            self.interface.addItem(iface.name + (f"  ({iface.ipv4})" if iface.ipv4 else ""), iface.name)
         self.interface.blockSignals(False)
-        if current_name:
+        if current:
             for idx in range(self.interface.count()):
-                if self.interface.itemData(idx) == current_name:
+                if self.interface.itemData(idx) == current:
                     self.interface.setCurrentIndex(idx)
                     break
         self._interface_changed(self.interface.currentIndex())
 
     def _selected_interface_name(self) -> str:
-        return self.interface.currentData() or self.interface.currentText().split()[0]
+        if self.interface.currentData():
+            return self.interface.currentData()
+        return self.interface.currentText().split()[0] if self.interface.currentText() else ""
 
     def _interface_changed(self, index: int) -> None:
         if index < 0 or index >= len(self._interfaces):
@@ -194,10 +250,29 @@ class ResponderView(QWidget):
 
     def _options(self) -> ResponderOptions:
         return ResponderOptions(
-            interface=self._selected_interface_name(), analyze=True,
-            verbose=self.verbose.isChecked(), quiet=self.quiet.isChecked(),
+            interface=self._selected_interface_name(),
+            analyze=True,
+            verbose=self.verbose.isChecked(),
+            quiet=self.quiet.isChecked(),
             executable=self.executable.text().strip() or "responder",
         )
+
+    def _scope(self) -> EngagementScope:
+        return EngagementScope(
+            name=self.engagement_name.text(),
+            allowed_cidrs=parse_network_text(self.scope_allow.toPlainText()),
+            excluded_cidrs=parse_network_text(self.scope_exclude.toPlainText()),
+        )
+
+    def _validate_scope(self) -> None:
+        try:
+            scope = self._scope()
+            detail = f"{len(scope.allowed_cidrs)} allowed network(s), {len(scope.excluded_cidrs)} exclusion(s)."
+            if not scope.allowed_cidrs:
+                detail += " Sources will be tagged UNKNOWN until an allowlist is provided."
+            self.scope_status.setText(detail)
+        except ValueError as exc:
+            self.scope_status.setText(f"Invalid scope: {exc}")
 
     def _update_preview(self) -> None:
         if self.interface.count() == 0:
@@ -214,20 +289,19 @@ class ResponderView(QWidget):
         for check in report.checks:
             row = self.preflight_table.rowCount()
             self.preflight_table.insertRow(row)
-            self.preflight_table.setItem(row, 0, QTableWidgetItem(check.name))
-            self.preflight_table.setItem(row, 1, QTableWidgetItem(check.status))
-            self.preflight_table.setItem(row, 2, QTableWidgetItem(check.detail))
+            for column, value in enumerate((check.name, check.status, check.detail)):
+                self.preflight_table.setItem(row, column, QTableWidgetItem(value))
         self.services_table.setRowCount(0)
         for service in report.services:
             row = self.services_table.rowCount()
             self.services_table.insertRow(row)
             state = "ON" if service.enabled is True else "OFF" if service.enabled is False else "UNKNOWN"
-            self.services_table.setItem(row, 0, QTableWidgetItem(service.name))
-            self.services_table.setItem(row, 1, QTableWidgetItem(state))
-            self.services_table.setItem(row, 2, QTableWidgetItem(service.source))
+            for column, value in enumerate((service.name, state, service.source)):
+                self.services_table.setItem(row, column, QTableWidgetItem(value))
 
     def _start(self) -> None:
         try:
+            self.controller.set_scope(self._scope())
             self.controller.start(self._options())
         except Exception as exc:
             QMessageBox.critical(self, "Unable to start Responder", str(exc))
@@ -237,16 +311,86 @@ class ResponderView(QWidget):
         running = state in {"starting", "running", "stopping"}
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(state in {"starting", "running"})
-        self.interface.setEnabled(not running)
-        self.executable.setEnabled(not running)
+        for widget in (self.interface, self.executable, self.engagement_name, self.scope_allow, self.scope_exclude):
+            widget.setEnabled(not running)
 
     def _session_changed(self, run_id: str) -> None:
         self.run_id.setText(f"Run {run_id}" if run_id else "No active session")
+        if not run_id:
+            self._refresh_evidence()
 
-    def _add_event(self, timestamp: str, level: str, message: str) -> None:
+    def _add_event(self, event) -> None:
         row = self.table.rowCount()
         self.table.insertRow(row)
-        self.table.setItem(row, 0, QTableWidgetItem(timestamp))
-        self.table.setItem(row, 1, QTableWidgetItem(level))
-        self.table.setItem(row, 2, QTableWidgetItem(message))
+        values = (event.timestamp, event.protocol, event.event_type, event.source or "—", event.scope, event.message)
+        for column, value in enumerate(values):
+            self.table.setItem(row, column, QTableWidgetItem(str(value)))
+        if self.protocol_filter.findText(event.protocol) < 0:
+            self.protocol_filter.addItem(event.protocol)
+        self._apply_event_filters()
         self.table.scrollToBottom()
+
+    def _apply_event_filters(self) -> None:
+        protocol = self.protocol_filter.currentText()
+        scope = self.scope_filter.currentText()
+        needle = self.event_search.text().lower().strip()
+        for row in range(self.table.rowCount()):
+            row_protocol = self.table.item(row, 1).text()
+            row_scope = self.table.item(row, 4).text()
+            haystack = " ".join(
+                self.table.item(row, column).text() for column in range(self.table.columnCount())
+            ).lower()
+            visible = (
+                (protocol == "All protocols" or protocol == row_protocol)
+                and (scope == "All scopes" or scope == row_scope)
+                and (not needle or needle in haystack)
+            )
+            self.table.setRowHidden(row, not visible)
+
+    def _refresh_evidence(self) -> None:
+        self._evidence_runs = list_runs(self.controller.runs.root)
+        self.evidence_select.blockSignals(True)
+        self.evidence_select.clear()
+        for run in self._evidence_runs:
+            name = run.manifest.get("metadata", {}).get("engagement", {}).get("name", "Unscoped analysis")
+            self.evidence_select.addItem(f"{run.run_id} · {name} · {run.event_count} events")
+        self.evidence_select.blockSignals(False)
+        self._load_evidence(self.evidence_select.currentIndex())
+
+    def _load_evidence(self, index: int) -> None:
+        self.evidence_table.setRowCount(0)
+        if index < 0 or index >= len(self._evidence_runs):
+            self.evidence_summary.setText("No stored runs")
+            return
+        run = self._evidence_runs[index]
+        metadata = run.manifest.get("metadata", {})
+        engagement = metadata.get("engagement", {})
+        self.evidence_summary.setText(
+            f"{run.run_id} · {engagement.get('name', 'Unscoped analysis')} · "
+            f"{run.event_count} event(s) · {run.manifest.get('started_at', 'unknown start')}"
+        )
+        for event in load_events(run):
+            row = self.evidence_table.rowCount()
+            self.evidence_table.insertRow(row)
+            values = (
+                event.get("timestamp", ""),
+                event.get("protocol", "SYSTEM"),
+                event.get("event_type", "log"),
+                event.get("source") or "—",
+                event.get("scope", "UNKNOWN"),
+                event.get("message", ""),
+            )
+            for column, value in enumerate(values):
+                self.evidence_table.setItem(row, column, QTableWidgetItem(str(value)))
+
+    def _export_evidence(self) -> None:
+        index = self.evidence_select.currentIndex()
+        if index < 0 or index >= len(self._evidence_runs):
+            return
+        run = self._evidence_runs[index]
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export evidence", f"{run.run_id}.zip", "ZIP archive (*.zip)"
+        )
+        if path:
+            result = export_bundle(run, path)
+            QMessageBox.information(self, "Evidence exported", str(result))
