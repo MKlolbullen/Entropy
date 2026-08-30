@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lnk-ng"
+version = "0.1.0"
+description = "Desktop workbench for LNK generation and Responder analysis workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PySide6>=6.7,<7",
+  "psutil>=5.9,<8",
+]
+
+[project.optional-dependencies]
+windows = ["pywin32>=306"]
+linux = ["pylnk3>=0.4"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+lnk-ng = "lnkup.app:main"
+
+[tool.setuptools.packages.find]
+include = ["lnkup*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
