@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QFormLayout, QGroupBox, QLabel, QPlainTextEdit, QV
 class ProtocolDetailPane(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setMinimumHeight(250)
         root = QVBoxLayout(self)
         box = QGroupBox("Selected event")
         form = QFormLayout(box)
@@ -18,14 +19,23 @@ class ProtocolDetailPane(QWidget):
         self.correlation = QLabel("—")
         self.context = QLabel("Select an event to see protocol-specific context.")
         self.context.setWordWrap(True)
-        for label, widget in (("Protocol", self.protocol), ("Type", self.event_type), ("Source", self.source), ("Scope", self.scope), ("Identity", self.identity), ("Name", self.name), ("Correlation", self.correlation), ("Context", self.context)):
+        for label, widget in (
+            ("Protocol", self.protocol),
+            ("Type", self.event_type),
+            ("Source", self.source),
+            ("Scope", self.scope),
+            ("Identity", self.identity),
+            ("Name", self.name),
+            ("Correlation", self.correlation),
+            ("Context", self.context),
+        ):
             form.addRow(label, widget)
         root.addWidget(box)
         raw = QGroupBox("Redacted event")
         raw_layout = QVBoxLayout(raw)
         self.message = QPlainTextEdit()
         self.message.setReadOnly(True)
-        self.message.setMaximumHeight(110)
+        self.message.setMaximumHeight(95)
         raw_layout.addWidget(self.message)
         root.addWidget(raw)
 
