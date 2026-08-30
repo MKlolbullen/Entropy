@@ -34,13 +34,7 @@ class RunStore:
         directory = self.root / run_id
         directory.mkdir(parents=True, exist_ok=False)
         session = RunSession(run_id=run_id, directory=directory, started_at=now.isoformat())
-        manifest = {
-            "schema": 1,
-            "run_id": run_id,
-            "started_at": session.started_at,
-            "ended_at": None,
-            "metadata": metadata or {},
-        }
+        manifest = {"schema": 2, "run_id": run_id, "started_at": session.started_at, "ended_at": None, "metadata": metadata or {}}
         session.manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         session.events_path.touch()
         self.current = session
@@ -49,9 +43,8 @@ class RunStore:
     def append_event(self, event: dict[str, Any]) -> None:
         if not self.current:
             return
-        record = {"run_id": self.current.run_id, **event}
         with self.current.events_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            handle.write(json.dumps({"run_id": self.current.run_id, **event}, ensure_ascii=False) + "\n")
 
     def finish(self, metadata: dict[str, Any] | None = None) -> None:
         if not self.current:
@@ -61,4 +54,6 @@ class RunStore:
         if metadata:
             manifest.setdefault("result", {}).update(metadata)
         self.current.manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        from lnkup.core.integrity import write_integrity_manifest
+        write_integrity_manifest(self.current.directory)
         self.current = None

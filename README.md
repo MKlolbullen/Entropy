@@ -1,97 +1,90 @@
 # LNK-NG
 
-A modern desktop evolution of the original LNKUp concept: **one window, two persistent views**, a LNK builder/inspector, and a singleton Responder **Analyze-mode** telemetry controller.
+**LNK generation, static analysis, Responder Analyze-mode telemetry, and evidence handling in one desktop workbench.**
 
-> For authorized security testing, lab validation, and defensive analysis. LNK-NG does not enable active Responder poisoning in Phase 3.
+> For authorized security testing, lab validation, and defensive analysis. Responder execution remains Analyze-only (`-A`).
 
-## Phase 3
+<p align="center"><img src="assets/lnk-ng-ui.svg" alt="LNK-NG Phase 4 UI overview" width="900"></p>
 
-Phase 3 turns the Phase 2 prototype into a more complete operator workbench without adding top-level window clutter.
+## What it does
 
-### Protocol-aware event model
+LNK-NG keeps a deliberately small top-level UI: **LNK Builder** and **Responder**. Underneath that, Phase 4 adds correlation, integrity verification, run comparison, and stronger LNK static-analysis indicators without turning the project into a sprawling multi-window tool.
 
-Responder output is normalized into structured events:
+<p align="center"><img src="assets/lnk-ng-workflow.svg" alt="LNK-NG workflow" width="900"></p>
 
-```text
-timestamp
-protocol       LLMNR / SMB / HTTP / DNS / SYSTEM / ...
-event_type     name_resolution_observed / authentication_observed / request_observed / listener_status / error / log
-source         observed IPv4 when available
-identity       username when present
-name           queried name when present
-scope          IN / OUT / UNKNOWN
-message        redacted original line
-```
+### LNK Builder
 
-Credential/hash-like values are redacted before the event reaches the UI or evidence store.
+- Build NTLM/environment-style shortcut artifacts for controlled lab validation.
+- Inspect existing Shell Link metadata with `win32com`, `pylnk3`, or a binary fallback parser.
+- Extract UNC references and useful embedded strings.
+- Calculate a static **risk score (0–100)** and surface indicators such as remote resource references, command interpreters, long argument strings, and target/workdir mismatches.
 
-### Engagement + scope tagging
+### Responder workbench
 
-The Responder view now includes an **Engagement** tab with:
+- One persistent `QProcess`; changing views does not spawn duplicate Responder instances.
+- Analyze-only operation (`-A`).
+- Preflight checks for executable/version/configuration, privileges, and listener conflicts.
+- Read-only `Responder.conf` service-state matrix.
+- Engagement CIDR allowlists/exclusions with `IN`, `OUT`, and `UNKNOWN` event tagging.
+- Protocol-aware structured events with credential/hash-like material redacted before persistence.
+- Phase 4 correlation IDs group repeated observations from the same source/name/protocol inside a time window.
 
-- engagement name
-- allowed CIDRs
-- excluded CIDRs
-- validation/normalization
-- immutable scope during an active run
+### Evidence
 
-Analyze-mode traffic is not blocked or modified; events are tagged against the engagement snapshot. Exclusions win over allowlists. With no allowlist, sources are tagged `UNKNOWN` rather than pretending they are in scope.
-
-### Evidence browser
-
-The **Evidence** tab can:
-
-- enumerate previous runs from `runs/`
-- show engagement name, timestamps, event count, and stored structured events
-- browse protocol/type/source/scope/message columns
-- export a run as a ZIP containing `manifest.json` and `events.jsonl`
-
-Each run remains self-contained:
+Each completed run contains:
 
 ```text
 runs/<run-id>/
 ├── manifest.json
-└── events.jsonl
+├── events.jsonl
+└── integrity.json
 ```
 
-### Event filtering
+`integrity.json` records SHA-256 hashes and file sizes for the manifest and event stream. Verification detects later tampering. Evidence exports include all three files.
 
-Live events can be filtered by:
+The evidence backend can also compare two runs and report deltas by protocol, event type, scope, and source—for example `SMB +3`, `OUT -2`, or a newly observed source.
 
-- protocol
-- scope (`IN`, `OUT`, `UNKNOWN`)
-- free-text search
-
-### CI + releases
-
-GitHub Actions now includes:
-
-- Linux + Windows test matrix
-- Python 3.10 / 3.12 / 3.13
-- pytest
-- Ruff
-- tag-triggered wheel/sdist builds
-- GitHub Release artifact upload for tags matching `v*`
-
-## UI structure
+## Event model
 
 ```text
-LNK-NG
+timestamp
+protocol
+ event_type
+source
+identity / name
+scope              IN | OUT | UNKNOWN
+correlation_id
+correlation_count
+message            redacted source line
+```
+
+## Architecture
+
+```text
+MainWindow
 ├── LNK Builder
 │   ├── Build
-│   └── Inspect
+│   └── Inspect + risk indicators
 │
 └── Responder
     ├── Engagement
     ├── Preflight
     ├── Services
-    ├── Events
-    └── Evidence
+    ├── Events + correlation
+    └── Evidence + integrity/diff/export
+
+ResponderController
+├── QProcess
+├── EventCorrelator
+└── RunStore
+    ├── manifest.json
+    ├── events.jsonl
+    └── integrity.json
 ```
 
-The Responder process remains owned by one controller, so changing tabs or switching back to LNK Builder does not spawn another process.
-
 ## Install
+
+Linux / Kali:
 
 ```bash
 python3 -m venv .venv
@@ -111,37 +104,23 @@ lnk-ng
 
 Responder remains an external dependency.
 
-## Tests
+## Tests and CI
 
 ```bash
 pytest -q
 ruff check lnkup tests
 ```
 
-## Releases
-
-Create and push a version tag to build GitHub release artifacts:
-
-```bash
-git tag v0.3.0
-git push origin v0.3.0
-```
+GitHub Actions covers Linux and Windows on Python 3.10, 3.12, and 3.13. Tags matching `v*` build wheel/sdist artifacts and publish a GitHub Release.
 
 ## Safety boundary
 
-Phase 3 reads Responder configuration and runs Responder with `-A`. It does not mutate `Responder.conf`, enable poisoning switches, or automatically interact with observed hosts.
+LNK-NG reads Responder configuration and runs Responder in Analyze mode. It does **not** mutate `Responder.conf`, enable poisoning switches, relay captured material, crack credentials, or automatically interact with observed hosts.
 
-## Next
+## Roadmap
 
-Potential Phase 4 work:
-
-- protocol-specific detail panes and event correlation
-- run comparison/diffing
-- signed evidence manifests / SHA-256 chain-of-custody metadata
-- installer/application bundles
-- richer LNK static-analysis indicators
-- optional project-level engagement templates
+Phase 5 candidates: signed/attested evidence bundles, protocol-specific detail panes, installer/application bundles, engagement templates, and captured runtime screenshots for the README.
 
 ## Provenance
 
-LNK-NG is a refactored next-generation experiment inspired by the original `Plazmaz/LNKUp`, with a new architecture and desktop workflow.
+LNK-NG is a refactored next-generation experiment inspired by `Plazmaz/LNKUp`, with a new architecture focused on visibility, reproducibility, and defensive analysis.

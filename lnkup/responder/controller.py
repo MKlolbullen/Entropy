@@ -8,6 +8,7 @@ from PySide6.QtCore import QObject, QProcess, Signal
 
 from lnkup.core.scope import EngagementScope
 from lnkup.core.sessions import RunStore
+from .correlation import EventCorrelator
 from .events import parse_line
 from .options import ResponderOptions
 
@@ -32,7 +33,7 @@ class ResponderController(QObject):
         self._state = ResponderState.STOPPED
         self.runs = RunStore(runs_root)
         self.scope = EngagementScope()
-
+        self.correlator = EventCorrelator()
         self._process.started.connect(self._on_started)
         self._process.finished.connect(self._on_finished)
         self._process.errorOccurred.connect(self._on_process_error)
@@ -64,13 +65,10 @@ class ResponderController(QObject):
         if executable is None:
             raise RuntimeError(f"Could not find '{options.executable}' in PATH")
         argv = options.argv()
+        self.correlator.reset()
         session = self.runs.start({
-            "component": "responder",
-            "mode": "analyze",
-            "interface": options.interface,
-            "command": argv,
-            "executable": executable,
-            "engagement": self.scope.to_dict(),
+            "component": "responder", "mode": "analyze", "interface": options.interface,
+            "command": argv, "executable": executable, "engagement": self.scope.to_dict(),
         })
         self.session_changed.emit(session.run_id)
         self._set_state(ResponderState.STARTING)
@@ -110,13 +108,14 @@ class ResponderController(QObject):
             if not event:
                 continue
             event.scope = self.scope.classify(event.source)
+            correlation = self.correlator.correlate(event)
+            event.correlation_id = correlation.correlation_id
+            event.correlation_count = correlation.count
             self.runs.append_event(event.to_dict())
             self.event_received.emit(event)
 
     def _read_stdout(self) -> None:
-        data = bytes(self._process.readAllStandardOutput()).decode(errors="replace")
-        self._consume(data)
+        self._consume(bytes(self._process.readAllStandardOutput()).decode(errors="replace"))
 
     def _read_stderr(self) -> None:
-        data = bytes(self._process.readAllStandardError()).decode(errors="replace")
-        self._consume(data)
+        self._consume(bytes(self._process.readAllStandardError()).decode(errors="replace"))
