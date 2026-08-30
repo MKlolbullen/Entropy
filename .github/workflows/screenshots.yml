@@ -2,10 +2,12 @@ name: Runtime screenshots
 
 on:
   pull_request:
+    paths-ignore:
+      - "assets/screenshots/**"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   capture:
@@ -14,6 +16,8 @@ jobs:
       QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -28,3 +32,13 @@ jobs:
         with:
           name: runtime-screenshots
           path: assets/screenshots/*.png
+      - name: Commit reproducible runtime screenshots
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets/screenshots/*.png
+          if ! git diff --cached --quiet; then
+            git commit -m "docs: refresh runtime screenshots [skip ci]"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
