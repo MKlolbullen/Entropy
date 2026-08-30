@@ -4,20 +4,9 @@ from pathlib import Path
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QButtonGroup,
-    QFileDialog,
-    QFormLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMessageBox,
-    QPlainTextEdit,
-    QPushButton,
-    QRadioButton,
-    QTabWidget,
-    QVBoxLayout,
-    QWidget,
+    QButtonGroup, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView,
+    QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QRadioButton,
+    QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from lnkup.core.inspector import inspect_lnk
@@ -38,11 +27,10 @@ class BuilderView(QWidget):
         root.setSpacing(12)
         title = QLabel("LNK Builder")
         title.setObjectName("viewTitle")
-        subtitle = QLabel("Build shortcuts or inspect existing Shell Link metadata in the same workspace.")
+        subtitle = QLabel("Build shortcuts or statically inspect Shell Link metadata and risk indicators.")
         subtitle.setObjectName("muted")
         root.addWidget(title)
         root.addWidget(subtitle)
-
         tabs = QTabWidget()
         tabs.addTab(self._build_tab(), "Build")
         tabs.addTab(self._inspect_tab(), "Inspect")
@@ -143,13 +131,28 @@ class BuilderView(QWidget):
         self.inspect_workdir = QLabel("—")
         self.inspect_icon = QLabel("—")
         self.inspect_icon.setWordWrap(True)
+        self.inspect_risk = QLabel("—")
         form.addRow("Header", self.inspect_valid)
         form.addRow("Parser", self.inspect_parser)
         form.addRow("Target", self.inspect_target)
         form.addRow("Arguments", self.inspect_args)
         form.addRow("Working directory", self.inspect_workdir)
         form.addRow("Icon", self.inspect_icon)
+        form.addRow("Static risk score", self.inspect_risk)
         root.addWidget(metadata)
+
+        risk = QGroupBox("Static-analysis indicators")
+        risk_layout = QVBoxLayout(risk)
+        self.risk_table = QTableWidget(0, 3)
+        self.risk_table.setHorizontalHeaderLabels(["Severity", "Indicator", "Detail"])
+        self.risk_table.verticalHeader().setVisible(False)
+        self.risk_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        header = self.risk_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        risk_layout.addWidget(self.risk_table)
+        root.addWidget(risk)
 
         strings = QGroupBox("UNC references / extracted strings")
         strings_layout = QVBoxLayout(strings)
@@ -166,13 +169,7 @@ class BuilderView(QWidget):
     def _spec(self) -> LnkSpec:
         payload_type = PayloadType.ENVIRONMENT if self.environment.isChecked() else PayloadType.NTLM
         variables = [v.strip().strip("%") for v in self.variables.text().replace(",", " ").split() if v.strip()]
-        return LnkSpec(
-            host=self.host.text().strip(),
-            output=Path(self.output.text()).expanduser(),
-            payload_type=payload_type,
-            environment_variables=variables,
-            execute=self.execute.text(),
-        )
+        return LnkSpec(host=self.host.text().strip(), output=Path(self.output.text()).expanduser(), payload_type=payload_type, environment_variables=variables, execute=self.execute.text())
 
     def _browse(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Save LNK", self.output.text(), "Windows shortcut (*.lnk)")
@@ -216,13 +213,17 @@ class BuilderView(QWidget):
             self.inspect_args.setText(result.arguments or "—")
             self.inspect_workdir.setText(result.working_directory or "—")
             self.inspect_icon.setText(result.icon_location or "—")
+            self.inspect_risk.setText(f"{result.risk_score}/100")
+            self.risk_table.setRowCount(0)
+            for indicator in result.indicators:
+                row = self.risk_table.rowCount()
+                self.risk_table.insertRow(row)
+                for column, value in enumerate((indicator.severity, indicator.name, indicator.detail)):
+                    self.risk_table.setItem(row, column, QTableWidgetItem(value))
             lines = []
             if result.unc_paths:
-                lines.append("UNC REFERENCES")
-                lines.extend(result.unc_paths)
-                lines.append("")
-            lines.append("EXTRACTED STRINGS")
-            lines.extend(result.strings)
+                lines.extend(["UNC REFERENCES", *result.unc_paths, ""])
+            lines.extend(["EXTRACTED STRINGS", *result.strings])
             self.inspect_strings.setPlainText("\n".join(lines))
         except Exception as exc:
             QMessageBox.critical(self, "Inspection failed", str(exc))
