@@ -94,7 +94,8 @@ def _inspect_pylnk3(path: Path, result: LnkInspection) -> bool:
             for name in candidates:
                 value = getattr(link, name, None)
                 if value:
-                    setattr(result, output, str(value)); break
+                    setattr(result, output, str(value))
+                    break
         result.parser = "pylnk3"
         return True
     except Exception:
